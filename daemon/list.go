@@ -11,12 +11,13 @@ import (
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/containerd/log"
-	"github.com/docker/go-connections/nat"
 	containertypes "github.com/moby/moby/api/types/container"
-	"github.com/moby/moby/api/types/filters"
+	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/v2/daemon/container"
+	"github.com/moby/moby/v2/daemon/internal/filters"
 	"github.com/moby/moby/v2/daemon/internal/image"
 	"github.com/moby/moby/v2/daemon/server/backend"
+	"github.com/moby/moby/v2/daemon/server/imagebackend"
 	"github.com/moby/moby/v2/errdefs"
 	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
@@ -329,7 +330,7 @@ func (daemon *Daemon) foldFilter(ctx context.Context, view *container.View, conf
 	if psFilters.Contains("ancestor") {
 		ancestorFilter = true
 		err := psFilters.WalkValues("ancestor", func(ancestor string) error {
-			img, err := daemon.imageService.GetImage(ctx, ancestor, backend.GetImageOpts{})
+			img, err := daemon.imageService.GetImage(ctx, ancestor, imagebackend.GetImageOpts{})
 			if err != nil {
 				log.G(ctx).Warnf("Error while looking up for image %v", ancestor)
 				return nil
@@ -404,13 +405,12 @@ func portOp(key string, filter map[string]bool) func(value string) error {
 			return fmt.Errorf("filter for '%s' should not contain ':': %s", key, value)
 		}
 		// support two formats, original format <portnum>/[<proto>] or <startport-endport>/[<proto>]
-		proto, portRange := nat.SplitProtoPort(value)
-		start, end, err := nat.ParsePortRange(portRange)
+		portRange, err := network.ParsePortRange(value)
 		if err != nil {
 			return fmt.Errorf("error while looking up for %s %s: %s", key, value, err)
 		}
-		for portNum := start; portNum <= end; portNum++ {
-			filter[fmt.Sprintf("%d/%s", portNum, proto)] = true
+		for p := range portRange.All() {
+			filter[p.String()] = true
 		}
 		return nil
 	}
@@ -620,7 +620,7 @@ func (daemon *Daemon) refreshImage(ctx context.Context, s *container.Snapshot) *
 	}
 
 	// Check if the image reference still resolves to the same digest.
-	img, err := daemon.imageService.GetImage(ctx, s.Image, backend.GetImageOpts{})
+	img, err := daemon.imageService.GetImage(ctx, s.Image, imagebackend.GetImageOpts{})
 	// If the image is no longer found or can't be resolved for some other
 	// reason. Update the Image to the specific ID of the original image it
 	// resolved to when the container was created.

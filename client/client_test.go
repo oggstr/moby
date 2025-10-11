@@ -78,9 +78,16 @@ func TestNewClientWithOpsFromEnv(t *testing.T) {
 		{
 			doc: "override api version",
 			envs: map[string]string{
-				"DOCKER_API_VERSION": "1.22",
+				"DOCKER_API_VERSION": "1.50",
 			},
-			expectedVersion: "1.22",
+			expectedVersion: "1.50",
+		},
+		{
+			doc: "override with unsupported api version",
+			envs: map[string]string{
+				"DOCKER_API_VERSION": "1.0",
+			},
+			expectedVersion: "1.0",
 		},
 	}
 
@@ -129,43 +136,43 @@ func TestGetAPIPath(t *testing.T) {
 			expected: "/v" + MaxAPIVersion + "/containers/json?s=c",
 		},
 		{
-			version:  "1.22",
+			version:  "1.50",
 			path:     "/containers/json",
-			expected: "/v1.22/containers/json",
+			expected: "/v1.50/containers/json",
 		},
 		{
-			version:  "1.22",
-			path:     "/containers/json",
-			query:    url.Values{},
-			expected: "/v1.22/containers/json",
-		},
-		{
-			version:  "1.22",
-			path:     "/containers/json",
-			query:    url.Values{"s": []string{"c"}},
-			expected: "/v1.22/containers/json?s=c",
-		},
-		{
-			version:  "v1.22",
-			path:     "/containers/json",
-			expected: "/v1.22/containers/json",
-		},
-		{
-			version:  "v1.22",
+			version:  "1.50",
 			path:     "/containers/json",
 			query:    url.Values{},
-			expected: "/v1.22/containers/json",
+			expected: "/v1.50/containers/json",
 		},
 		{
-			version:  "v1.22",
+			version:  "1.50",
 			path:     "/containers/json",
 			query:    url.Values{"s": []string{"c"}},
-			expected: "/v1.22/containers/json?s=c",
+			expected: "/v1.50/containers/json?s=c",
 		},
 		{
-			version:  "v1.22",
+			version:  "v1.50",
+			path:     "/containers/json",
+			expected: "/v1.50/containers/json",
+		},
+		{
+			version:  "v1.50",
+			path:     "/containers/json",
+			query:    url.Values{},
+			expected: "/v1.50/containers/json",
+		},
+		{
+			version:  "v1.50",
+			path:     "/containers/json",
+			query:    url.Values{"s": []string{"c"}},
+			expected: "/v1.50/containers/json?s=c",
+		},
+		{
+			version:  "v1.50",
 			path:     "/networks/kiwl$%^",
-			expected: "/v1.22/networks/kiwl$%25%5E",
+			expected: "/v1.50/networks/kiwl$%25%5E",
 		},
 	}
 
@@ -236,7 +243,7 @@ func TestNewClientWithOpsFromEnvSetsDefaultVersion(t *testing.T) {
 	assert.NilError(t, err)
 	assert.Check(t, is.Equal(client.ClientVersion(), MaxAPIVersion))
 
-	const expected = "1.22"
+	const expected = "1.50"
 	t.Setenv("DOCKER_API_VERSION", expected)
 	client, err = NewClientWithOpts(FromEnv)
 	assert.NilError(t, err)
@@ -253,11 +260,11 @@ func TestNegotiateAPIVersionEmpty(t *testing.T) {
 	assert.NilError(t, err)
 
 	// set our version to something new
-	client.version = "1.25"
+	client.version = "1.51"
 
 	// if no version from server, expect the earliest
 	// version before APIVersion was implemented
-	const expected = "1.24"
+	const expected = fallbackAPIVersion
 
 	// test downgrade
 	client.NegotiateAPIVersionPing(types.Ping{})
@@ -276,16 +283,16 @@ func TestNegotiateAPIVersion(t *testing.T) {
 		{
 			// client should downgrade to the version reported by the daemon.
 			doc:             "downgrade from default",
-			pingVersion:     "1.21",
-			expectedVersion: "1.21",
+			pingVersion:     "1.50",
+			expectedVersion: "1.50",
 		},
 		{
 			// client should not downgrade to the version reported by the
 			// daemon if a custom version was set.
 			doc:             "no downgrade from custom version",
-			clientVersion:   "1.25",
-			pingVersion:     "1.21",
-			expectedVersion: "1.25",
+			clientVersion:   "1.51",
+			pingVersion:     "1.50",
+			expectedVersion: "1.51",
 		},
 		{
 			// client should downgrade to the last version before version
@@ -293,24 +300,22 @@ func TestNegotiateAPIVersion(t *testing.T) {
 			// a version.
 			doc:             "downgrade legacy",
 			pingVersion:     "",
-			expectedVersion: "1.24",
+			expectedVersion: fallbackAPIVersion,
 		},
 		{
-			// client should downgrade to the version reported by the daemon.
-			// version negotiation was added in API 1.25, so this is theoretical,
-			// but it should negotiate to versions before that if the daemon
-			// gives that as a response.
-			doc:             "downgrade old",
+			// client should not downgrade to the version reported by the daemon
+			// if the version is not supported.
+			doc:             "no downgrade old",
 			pingVersion:     "1.19",
-			expectedVersion: "1.19",
+			expectedVersion: MaxAPIVersion,
 		},
 		{
 			// client should not upgrade to a newer version if a version was set,
 			// even if both the daemon and the client support it.
 			doc:             "no upgrade",
-			clientVersion:   "1.20",
-			pingVersion:     "1.21",
-			expectedVersion: "1.20",
+			clientVersion:   "1.50",
+			pingVersion:     "1.51",
+			expectedVersion: "1.50",
 		},
 	}
 
@@ -380,14 +385,14 @@ func TestNegotiateAPIVersionAutomatic(t *testing.T) {
 	assert.Check(t, is.Equal(client.ClientVersion(), expected))
 
 	// First request should trigger negotiation
-	pingVersion = "1.35"
-	expected = "1.35"
+	pingVersion = "1.50"
+	expected = "1.50"
 	_, _ = client.Info(ctx)
 	assert.Check(t, is.Equal(client.ClientVersion(), expected))
 
 	// Once successfully negotiated, subsequent requests should not re-negotiate
-	pingVersion = "1.25"
-	expected = "1.35"
+	pingVersion = "1.49"
+	expected = "1.50"
 	_, _ = client.Info(ctx)
 	assert.Check(t, is.Equal(client.ClientVersion(), expected))
 }
@@ -398,7 +403,7 @@ func TestNegotiateAPIVersionWithEmptyVersion(t *testing.T) {
 	client, err := NewClientWithOpts(WithVersion(""))
 	assert.NilError(t, err)
 
-	const expected = "1.35"
+	const expected = "1.50"
 	client.NegotiateAPIVersionPing(types.Ping{APIVersion: expected})
 	assert.Check(t, is.Equal(client.ClientVersion(), expected))
 }
@@ -406,11 +411,11 @@ func TestNegotiateAPIVersionWithEmptyVersion(t *testing.T) {
 // TestNegotiateAPIVersionWithFixedVersion asserts that initializing a client
 // with a fixed version disables API-version negotiation
 func TestNegotiateAPIVersionWithFixedVersion(t *testing.T) {
-	const customVersion = "1.35"
+	const customVersion = "1.50"
 	client, err := NewClientWithOpts(WithVersion(customVersion))
 	assert.NilError(t, err)
 
-	client.NegotiateAPIVersionPing(types.Ping{APIVersion: "1.31"})
+	client.NegotiateAPIVersionPing(types.Ping{APIVersion: "1.49"})
 	assert.Check(t, is.Equal(client.ClientVersion(), customVersion))
 }
 
@@ -418,42 +423,65 @@ func TestNegotiateAPIVersionWithFixedVersion(t *testing.T) {
 // version.
 func TestCustomAPIVersion(t *testing.T) {
 	tests := []struct {
+		doc      string
 		version  string
 		expected string
 	}{
 		{
+			doc:      "empty version",
 			version:  "",
 			expected: MaxAPIVersion,
 		},
 		{
-			version:  "1.0",
-			expected: "1.0",
+			doc:      "custom lower version, no v-prefix",
+			version:  "1.50",
+			expected: "1.50",
 		},
 		{
+			// We allow upgrading the client to an unsupported higher version for testing.
+			doc:      "upgrade version, no v-prefix",
 			version:  "9.99",
 			expected: "9.99",
 		},
 		{
+			// We currently ignore malformed versions.
+			doc:      "empty version, with v-prefix",
 			version:  "v",
 			expected: MaxAPIVersion,
 		},
 		{
-			version:  "v1.0",
-			expected: "1.0",
+			doc:      "custom lower version, with v-prefix",
+			version:  "v1.50",
+			expected: "1.50",
 		},
 		{
+			// We allow upgrading the client to an unsupported higher version for testing.
+			doc:      "upgrade version, with v-prefix",
 			version:  "v9.99",
 			expected: "9.99",
 		},
 		{
+			// We currently allow downgrading the client to an unsupported lower version for testing.
+			doc:      "downgrade unsupported version, no v-prefix",
+			version:  "1.0",
+			expected: "1.0",
+		},
+		{
+			// We currently allow downgrading the client to an unsupported lower version for testing.
+			doc:      "downgrade unsupported version, no v-prefix",
+			version:  "v1.0",
+			expected: "1.0",
+		},
+		{
 			// When manually setting a version, no validation happens.
 			// so anything is accepted.
+			doc:      "malformed version",
 			version:  "something-weird",
 			expected: "something-weird",
 		},
 	}
 	for _, tc := range tests {
-		t.Run(tc.version, func(t *testing.T) {
+		t.Run(tc.doc, func(t *testing.T) {
 			client, err := NewClientWithOpts(WithVersion(tc.version))
 			assert.NilError(t, err)
 			assert.Check(t, is.Equal(client.ClientVersion(), tc.expected))

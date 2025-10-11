@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp/cmpopts"
-	containertypes "github.com/moby/moby/api/types/container"
 	networktypes "github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 	"github.com/moby/moby/v2/daemon/libnetwork/drivers/bridge"
@@ -191,7 +190,7 @@ func TestBridgeICC(t *testing.T) {
 			if pingHost == "" {
 				if tc.isLinkLocal {
 					inspect := container.Inspect(ctx, t, c, id1)
-					pingHost = inspect.NetworkSettings.Networks[bridgeName].GlobalIPv6Address + "%eth0"
+					pingHost = inspect.NetworkSettings.Networks[bridgeName].GlobalIPv6Address.WithZone("eth0").String()
 				} else {
 					pingHost = ctr1Name
 				}
@@ -329,7 +328,7 @@ func TestBridgeINC(t *testing.T) {
 				targetAddr = ctr1Info.NetworkSettings.Networks[bridge1].GlobalIPv6Address
 			}
 
-			pingCmd := []string{"ping", "-c1", "-W3", targetAddr}
+			pingCmd := []string{"ping", "-c1", "-W3", targetAddr.String()}
 
 			ctr2Name := sanitizeCtrName(t.Name() + "-ctr2")
 			attachCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -388,7 +387,7 @@ func TestBridgeINCRouted(t *testing.T) {
 			container.WithNetworkMode(netName),
 			container.WithName("ctr-"+gwMode),
 			container.WithExposedPorts("80/tcp"),
-			container.WithPortMap(containertypes.PortMap{"80/tcp": {}}),
+			container.WithPortMap(networktypes.PortMap{networktypes.MustParsePort("80/tcp"): {}}),
 		)
 		t.Cleanup(func() {
 			c.ContainerRemove(ctx, ctrId, client.ContainerRemoveOptions{Force: true})
@@ -400,8 +399,8 @@ func TestBridgeINCRouted(t *testing.T) {
 		insp := container.Inspect(ctx, t, c, ctrId)
 		return ctrDesc{
 			id:   ctrId,
-			ipv4: insp.NetworkSettings.Networks[netName].IPAddress,
-			ipv6: insp.NetworkSettings.Networks[netName].GlobalIPv6Address,
+			ipv4: insp.NetworkSettings.Networks[netName].IPAddress.String(),
+			ipv6: insp.NetworkSettings.Networks[netName].GlobalIPv6Address.String(),
 		}
 	}
 
@@ -565,7 +564,7 @@ func TestAccessToPublishedPort(t *testing.T) {
 				container.WithNetworkMode(serverNetName),
 				container.WithName("ctr-server"),
 				container.WithExposedPorts("80/tcp"),
-				container.WithPortMap(containertypes.PortMap{"80/tcp": {containertypes.PortBinding{HostPort: "8080"}}}),
+				container.WithPortMap(networktypes.PortMap{networktypes.MustParsePort("80/tcp"): {networktypes.PortBinding{HostPort: "8080"}}}),
 				container.WithCmd("httpd", "-f"),
 			)
 			defer c.ContainerRemove(ctx, ctrId, client.ContainerRemoveOptions{Force: true})
@@ -589,11 +588,11 @@ func TestAccessToPublishedPort(t *testing.T) {
 			assert.NilError(t, err)
 			for _, ipamCfg := range insp.IPAM.Config {
 				ipv := "ipv4"
-				if strings.Contains(ipamCfg.Gateway, ":") {
+				if ipamCfg.Gateway.Is6() {
 					ipv = "ipv6"
 				}
 				t.Run(ipv, func(t *testing.T) {
-					url := "http://" + net.JoinHostPort(ipamCfg.Gateway, "8080")
+					url := "http://" + net.JoinHostPort(ipamCfg.Gateway.String(), "8080")
 					res := container.RunAttach(ctx, t, c,
 						container.WithNetworkMode(clientNetName),
 						container.WithCmd("wget", "-O-", "-T3", url),
@@ -688,7 +687,7 @@ func TestInterNetworkDirectRouting(t *testing.T) {
 				container.WithNetworkMode(serverNetName),
 				container.WithName("ctr-pub"),
 				container.WithExposedPorts("80/tcp"),
-				container.WithPortMap(containertypes.PortMap{"80/tcp": {containertypes.PortBinding{HostPort: "8080"}}}),
+				container.WithPortMap(networktypes.PortMap{networktypes.MustParsePort("80/tcp"): {networktypes.PortBinding{HostPort: "8080"}}}),
 				container.WithCmd("httpd", "-f"),
 			)
 			defer c.ContainerRemove(ctx, ctrPubId, client.ContainerRemoveOptions{Force: true})
@@ -732,10 +731,10 @@ func TestInterNetworkDirectRouting(t *testing.T) {
 				}
 			}
 			t.Run("w", func(t *testing.T) { // Wait for the parallel tests to complete.
-				t.Run("ipv4/pub", checkHTTP(pub4, tc.expPubResp))
-				t.Run("ipv6/pub", checkHTTP(pub6, tc.expPubResp))
-				t.Run("ipv4/unpub", checkHTTP(unpub4, tc.expUnpubResp))
-				t.Run("ipv6/unpub", checkHTTP(unpub6, tc.expUnpubResp))
+				t.Run("ipv4/pub", checkHTTP(pub4.String(), tc.expPubResp))
+				t.Run("ipv6/pub", checkHTTP(pub6.String(), tc.expPubResp))
+				t.Run("ipv4/unpub", checkHTTP(unpub4.String(), tc.expUnpubResp))
+				t.Run("ipv6/unpub", checkHTTP(unpub6.String(), tc.expUnpubResp))
 			})
 		})
 	}
@@ -796,7 +795,7 @@ func TestDefaultBridgeIPv6(t *testing.T) {
 			defer cancel()
 			res := container.RunAttach(attachCtx, t, c,
 				container.WithImage("busybox:latest"),
-				container.WithCmd("ping", "-c1", "-W3", gIPv6),
+				container.WithCmd("ping", "-c1", "-W3", gIPv6.String()),
 			)
 			defer c.ContainerRemove(ctx, res.ContainerID, client.ContainerRemoveOptions{
 				Force: true,
@@ -1063,7 +1062,7 @@ func TestDisableIPv6OnInterface(t *testing.T) {
 				container.WithName(ctrName),
 				container.WithNetworkMode(tc.netName),
 				container.WithExposedPorts("80/tcp"),
-				container.WithPortMap(containertypes.PortMap{"80/tcp": {{HostPort: "8080"}}}),
+				container.WithPortMap(networktypes.PortMap{networktypes.MustParsePort("80/tcp"): {{HostPort: "8080"}}}),
 				container.WithEndpointSettings(tc.netName, &networktypes.EndpointSettings{
 					DriverOpts: map[string]string{
 						netlabel.EndpointSysctls: "net.ipv6.conf.IFNAME.disable_ipv6=1",
@@ -1079,7 +1078,7 @@ func TestDisableIPv6OnInterface(t *testing.T) {
 
 			// Inspect should not show an IPv6 container address.
 			inspRes2 := container.Inspect(ctx, t, c, ctrId)
-			assert.Check(t, is.Equal("", inspRes2.NetworkSettings.Networks[tc.netName].GlobalIPv6Address))
+			assert.Check(t, is.Equal(netip.Addr{}, inspRes2.NetworkSettings.Networks[tc.netName].GlobalIPv6Address))
 			assert.Check(t, is.Equal(0, inspRes2.NetworkSettings.Networks[tc.netName].GlobalIPv6PrefixLen))
 
 			// Port mappings should be IPv4-only - but can't see the proxy processes in the rootless netns.
@@ -1410,11 +1409,12 @@ func TestContainerDisabledIPv6(t *testing.T) {
 	defer c.Close()
 
 	const netName = "ipv6br"
+	subnet6 := netip.MustParsePrefix("fd64:40cd:7fb4:8971::/64")
 	network.CreateNoError(ctx, t, c, netName,
 		network.WithDriver("bridge"),
 		network.WithOption(bridge.BridgeName, netName),
 		network.WithIPv6(),
-		network.WithIPAM("fd64:40cd:7fb4:8971::/64", "fd64:40cd:7fb4:8971::1"),
+		network.WithIPAM(subnet6.String(), "fd64:40cd:7fb4:8971::1"),
 	)
 	defer network.RemoveNoError(ctx, t, c, netName)
 
@@ -1425,7 +1425,7 @@ func TestContainerDisabledIPv6(t *testing.T) {
 	defer c.ContainerRemove(ctx, ctrWith6, client.ContainerRemoveOptions{Force: true})
 	inspect := container.Inspect(ctx, t, c, ctrWith6)
 	addr := inspect.NetworkSettings.Networks[netName].GlobalIPv6Address
-	assert.Check(t, is.Contains(addr, "fd64:40cd:7fb4:8971"))
+	assert.Check(t, subnet6.Contains(addr))
 
 	// Run a container with IPv6 disabled.
 	const ctrNo6Name = "ctrNo6"
@@ -1437,7 +1437,7 @@ func TestContainerDisabledIPv6(t *testing.T) {
 	defer c.ContainerRemove(ctx, ctrNo6, client.ContainerRemoveOptions{Force: true})
 	inspect = container.Inspect(ctx, t, c, ctrNo6)
 	addr = inspect.NetworkSettings.Networks[netName].GlobalIPv6Address
-	assert.Check(t, is.Equal(addr, ""))
+	assert.Check(t, !addr.IsValid())
 
 	execCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -1504,7 +1504,7 @@ func TestGatewaySelection(t *testing.T) {
 		container.WithName(ctrName),
 		container.WithNetworkMode(netName4),
 		container.WithExposedPorts("80"),
-		container.WithPortMap(containertypes.PortMap{"80": {{HostPort: "8080"}}}),
+		container.WithPortMap(networktypes.PortMap{networktypes.MustParsePort("80"): {{HostPort: "8080"}}}),
 		container.WithCmd("httpd", "-f"),
 	)
 	defer c.ContainerRemove(ctx, ctrId, client.ContainerRemoveOptions{Force: true})
@@ -1574,7 +1574,7 @@ func checkProxies(ctx context.Context, t *testing.T, c *client.Client, daemonPid
 		if e.ctrIPv4 {
 			ctrIP = nw.IPAddress
 		}
-		wantProxies = append(wantProxies, makeExpStr(e.proto, e.hostIP, e.hostPort, ctrIP, e.ctrPort))
+		wantProxies = append(wantProxies, makeExpStr(e.proto, e.hostIP, e.hostPort, ctrIP.String(), e.ctrPort))
 	}
 
 	gotProxies := make([]string, 0, len(exp))
@@ -1903,8 +1903,7 @@ func TestNetworkInspectGateway(t *testing.T) {
 	insp, err := c.NetworkInspect(ctx, nid, client.NetworkInspectOptions{})
 	assert.NilError(t, err)
 	for _, ipamCfg := range insp.IPAM.Config {
-		_, err := netip.ParseAddr(ipamCfg.Gateway)
-		assert.Check(t, err)
+		assert.Check(t, ipamCfg.Gateway.IsValid())
 	}
 }
 
@@ -1956,7 +1955,7 @@ func TestDropInForwardChain(t *testing.T) {
 		ctrId := container.Run(ctx, t, c,
 			container.WithNetworkMode(netName46),
 			container.WithExposedPorts("80"),
-			container.WithPortMap(containertypes.PortMap{"80": {{HostPort: hostPort}}}),
+			container.WithPortMap(networktypes.PortMap{networktypes.MustParsePort("80"): {{HostPort: hostPort}}}),
 			container.WithCmd("httpd", "-f"),
 		)
 		defer c.ContainerRemove(ctx, ctrId, client.ContainerRemoveOptions{Force: true})

@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	cerrdefs "github.com/containerd/errdefs"
-	"github.com/moby/moby/api/types/filters"
 	"github.com/moby/moby/api/types/image"
 	"gotest.tools/v3/assert"
 	is "gotest.tools/v3/assert/cmp"
@@ -55,11 +54,10 @@ func TestImageList(t *testing.T) {
 		},
 		{
 			options: ImageListOptions{
-				Filters: filters.NewArgs(
-					filters.Arg("label", "label1"),
-					filters.Arg("label", "label2"),
-					filters.Arg("dangling", "true"),
-				),
+				Filters: make(Filters).
+					Add("label", "label1").
+					Add("label", "label2").
+					Add("dangling", "true"),
 			},
 			expectedQueryParams: map[string]string{
 				"all":     "",
@@ -69,7 +67,7 @@ func TestImageList(t *testing.T) {
 		},
 		{
 			options: ImageListOptions{
-				Filters: filters.NewArgs(filters.Arg("dangling", "false")),
+				Filters: make(Filters).Add("dangling", "false"),
 			},
 			expectedQueryParams: map[string]string{
 				"all":     "",
@@ -125,9 +123,8 @@ func TestImageListWithSharedSize(t *testing.T) {
 		options    ImageListOptions
 		sharedSize string // expected value for the shared-size query param, or empty if it should not be set.
 	}{
-		{name: "unset after 1.42, no options set", version: "1.42"},
-		{name: "set after 1.42, if requested", version: "1.42", options: ImageListOptions{SharedSize: true}, sharedSize: "1"},
-		{name: "unset before 1.42, even if requested", version: "1.41", options: ImageListOptions{SharedSize: true}},
+		{name: "unset, no options set"},
+		{name: "set", options: ImageListOptions{SharedSize: true}, sharedSize: "1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

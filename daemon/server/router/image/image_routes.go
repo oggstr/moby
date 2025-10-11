@@ -15,12 +15,12 @@ import (
 	"github.com/moby/moby/api/pkg/authconfig"
 	"github.com/moby/moby/api/pkg/progress"
 	"github.com/moby/moby/api/pkg/streamformatter"
-	"github.com/moby/moby/api/types/filters"
 	"github.com/moby/moby/api/types/registry"
 	"github.com/moby/moby/api/types/versions"
 	"github.com/moby/moby/v2/daemon/builder/remotecontext"
+	"github.com/moby/moby/v2/daemon/internal/compat"
+	"github.com/moby/moby/v2/daemon/internal/filters"
 	"github.com/moby/moby/v2/daemon/internal/image"
-	"github.com/moby/moby/v2/daemon/server/backend"
 	"github.com/moby/moby/v2/daemon/server/httputils"
 	"github.com/moby/moby/v2/daemon/server/imagebackend"
 	"github.com/moby/moby/v2/dockerversion"
@@ -379,17 +379,16 @@ func (ir *imageRouter) getImagesByName(ctx context.Context, w http.ResponseWrite
 		return errdefs.InvalidParameter(errors.New("conflicting options: manifests and platform options cannot both be set"))
 	}
 
-	resp, err := ir.backend.ImageInspect(ctx, vars["name"], backend.ImageInspectOpts{
+	inspectData, err := ir.backend.ImageInspect(ctx, vars["name"], imagebackend.ImageInspectOpts{
 		Manifests: manifests,
 		Platform:  platform,
 	})
 	if err != nil {
 		return err
 	}
+	imageInspect := inspectData.InspectResponse
 
-	imageInspect := &inspectCompatResponse{
-		InspectResponse: resp,
-	}
+	var legacyOptions []compat.Option
 
 	// Make sure we output empty arrays instead of nil. While Go nil slice is functionally equivalent to an empty slice,
 	// it matters for the JSON representation.
@@ -402,32 +401,60 @@ func (ir *imageRouter) getImagesByName(ctx context.Context, w http.ResponseWrite
 
 	version := httputils.VersionFromContext(ctx)
 	if versions.LessThan(version, "1.44") {
-		imageInspect.VirtualSize = imageInspect.Size //nolint:staticcheck // ignore SA1019: field is deprecated, but still set on API < v1.44.
-
+		legacyOptions = append(legacyOptions, compat.WithExtraFields(map[string]any{
+			"VirtualSize": imageInspect.Size,
+		}))
 		if imageInspect.Created == "" {
 			// backwards compatibility for Created not existing returning "0001-01-01T00:00:00Z"
 			// https://github.com/moby/moby/issues/47368
 			imageInspect.Created = time.Time{}.Format(time.RFC3339Nano)
 		}
 	}
-	if versions.GreaterThanOrEqualTo(version, "1.45") {
-		imageInspect.Container = ""        //nolint:staticcheck // ignore SA1019: field is deprecated, but still set on API < v1.45.
-		imageInspect.ContainerConfig = nil //nolint:staticcheck // ignore SA1019: field is deprecated, but still set on API < v1.45.
+	if versions.LessThan(version, "1.45") {
+		legacyOptions = append(legacyOptions, compat.WithExtraFields(map[string]any{
+			"Container":       inspectData.Container,
+			"ContainerConfig": inspectData.ContainerConfig,
+		}))
 	}
 	if versions.LessThan(version, "1.48") {
 		imageInspect.Descriptor = nil
 	}
 	if versions.LessThan(version, "1.52") {
+		// These fields have "omitempty" on API v1.52 and higher,
+		// but older API versions returned them unconditionally.
+		legacyOptions = append(legacyOptions, compat.WithExtraFields(map[string]any{
+			"Parent":        inspectData.Parent, // field is deprecated, but still included in response when present (built with legacy builder).
+			"Comment":       inspectData.Comment,
+			"DockerVersion": inspectData.DockerVersion, // field is deprecated, but still included in response when present.
+			"Author":        inspectData.Author,
+		}))
+
+		// preserve fields in the image Config that have an "omitempty"
+		// in the OCI spec, but weren't omitted in API v1.51 and lower.
 		if versions.LessThan(version, "1.50") {
-			imageInspect.legacyConfig = legacyConfigFields["v1.49"]
+			legacyOptions = append(legacyOptions, compat.WithExtraFields(map[string]any{
+				"Config": legacyConfigFields["v1.49"],
+			}))
 		} else {
-			// inspectResponse preserves fields in the response that have an
-			// "omitempty" in the OCI spec, but didn't omit such fields in
-			// legacy responses before API v1.50.
-			imageInspect.legacyConfig = legacyConfigFields["v1.50-v1.51"]
+			legacyOptions = append(legacyOptions, compat.WithExtraFields(map[string]any{
+				"Config": legacyConfigFields["v1.50-v1.51"],
+			}))
+		}
+	} else {
+		if inspectData.Parent != "" {
+			// field is deprecated, but still included in response when present (built with legacy builder).
+			legacyOptions = append(legacyOptions, compat.WithExtraFields(map[string]any{"Parent": inspectData.Parent}))
+		}
+		if inspectData.DockerVersion != "" {
+			// field is deprecated, but still included in response when present.
+			legacyOptions = append(legacyOptions, compat.WithExtraFields(map[string]any{"DockerVersion": inspectData.DockerVersion}))
 		}
 	}
 
+	if len(legacyOptions) > 0 {
+		resp := compat.Wrap(imageInspect, legacyOptions...)
+		return httputils.WriteJSON(w, http.StatusOK, resp)
+	}
 	return httputils.WriteJSON(w, http.StatusOK, imageInspect)
 }
 
@@ -543,7 +570,7 @@ func (ir *imageRouter) postImagesTag(ctx context.Context, w http.ResponseWriter,
 		return errdefs.InvalidParameter(errors.New("refusing to create an ambiguous tag using digest algorithm as name"))
 	}
 
-	img, err := ir.backend.GetImage(ctx, vars["name"], backend.GetImageOpts{})
+	img, err := ir.backend.GetImage(ctx, vars["name"], imagebackend.GetImageOpts{})
 	if err != nil {
 		return errdefs.NotFound(err)
 	}

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-ARG GO_VERSION=1.24.7
+ARG GO_VERSION=1.24.8
 ARG BASE_DEBIAN_DISTRO="bookworm"
 ARG GOLANG_IMAGE="golang:${GO_VERSION}-${BASE_DEBIAN_DISTRO}"
 
@@ -13,7 +13,7 @@ ARG XX_VERSION=1.7.0
 ARG VPNKIT_VERSION=0.6.0
 
 # DOCKERCLI_VERSION is the version of the CLI to install in the dev-container.
-ARG DOCKERCLI_VERSION=v28.3.2
+ARG DOCKERCLI_VERSION=v28.5.0
 ARG DOCKERCLI_REPOSITORY="https://github.com/docker/cli.git"
 
 # cli version used for integration-cli tests
@@ -21,10 +21,10 @@ ARG DOCKERCLI_INTEGRATION_REPOSITORY="https://github.com/docker/cli.git"
 ARG DOCKERCLI_INTEGRATION_VERSION=v18.06.3-ce
 
 # BUILDX_VERSION is the version of buildx to install in the dev container.
-ARG BUILDX_VERSION=0.25.0
+ARG BUILDX_VERSION=0.29.1
 
 # COMPOSE_VERSION is the version of compose to install in the dev container.
-ARG COMPOSE_VERSION=v2.38.2
+ARG COMPOSE_VERSION=v2.40.0
 
 ARG SYSTEMD="false"
 ARG FIREWALLD="false"
@@ -202,7 +202,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 
 FROM base AS gotestsum
 # GOTESTSUM_VERSION is the version of gotest.tools/gotestsum to install.
-ARG GOTESTSUM_VERSION=v1.12.3
+ARG GOTESTSUM_VERSION=v1.13.0
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
         GOBIN=/build CGO_ENABLED=0 go install "gotest.tools/gotestsum@${GOTESTSUM_VERSION}" \
@@ -501,6 +501,7 @@ RUN --mount=type=cache,sharing=locked,id=moby-dev-aptlib,target=/var/lib/apt \
             jq \
             libcap2-bin \
             libnet1 \
+            libnftables-dev \
             libnl-3-200 \
             libprotobuf-c1 \
             libyajl2 \
@@ -548,6 +549,7 @@ RUN --mount=type=cache,sharing=locked,id=moby-build-aptlib,target=/var/lib/apt \
         xx-apt-get install --no-install-recommends -y \
             gcc \
             libc6-dev \
+            libnftables-dev \
             libseccomp-dev \
             libsystemd-dev \
             pkg-config

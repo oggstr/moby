@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/moby/moby/api/types/filters"
 	networktypes "github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 	"github.com/moby/moby/v2/integration/internal/network"
@@ -49,12 +48,12 @@ func TestInspectNetwork(t *testing.T) {
 
 	networkName := "Overlay" + t.Name()
 	cidrv4 := netip.MustParsePrefix("192.168.0.0/24")
-	const ipv4Range = "192.168.0.0/25"
+	ipv4Range := netip.MustParsePrefix("192.168.0.0/25")
 
 	overlayID := network.CreateNoError(ctx, t, c1, networkName,
 		network.WithDriver("overlay"),
 		network.WithIPAMConfig(networktypes.IPAMConfig{
-			Subnet:  cidrv4.String(),
+			Subnet:  cidrv4,
 			IPRange: ipv4Range,
 		}),
 	)
@@ -133,8 +132,8 @@ func TestInspectNetwork(t *testing.T) {
 
 					assert.Check(t, nw.IPAM.Config != nil)
 					for _, cfg := range nw.IPAM.Config {
-						assert.Assert(t, cfg.Gateway != "")
-						assert.Assert(t, cfg.Subnet != "")
+						assert.Assert(t, cfg.Gateway.IsValid())
+						assert.Assert(t, cfg.Subnet.IsValid())
 					}
 
 					if d.CachedInfo.Swarm.ControlAvailable {
@@ -166,7 +165,7 @@ func TestInspectNetwork(t *testing.T) {
 
 	leaderID := func() string {
 		ls, err := c1.NodeList(ctx, client.NodeListOptions{
-			Filters: filters.NewArgs(filters.Arg("role", "manager")),
+			Filters: make(client.Filters).Add("role", "manager"),
 		})
 		assert.NilError(t, err)
 		for _, node := range ls {

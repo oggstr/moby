@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	containertypes "github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 	"github.com/moby/moby/v2/integration/internal/container"
 	"gotest.tools/v3/assert"
@@ -113,7 +113,7 @@ func TestNetworkLoopbackNat(t *testing.T) {
 	assert.Check(t, is.Equal(msg, strings.TrimSpace(b.String())))
 }
 
-func startServerContainer(ctx context.Context, t *testing.T, msg string, port int) string {
+func startServerContainer(ctx context.Context, t *testing.T, msg string, port uint16) string {
 	t.Helper()
 	apiClient := testEnv.APIClient()
 
@@ -122,8 +122,8 @@ func startServerContainer(ctx context.Context, t *testing.T, msg string, port in
 		container.WithCmd("sh", "-c", fmt.Sprintf("echo %q | nc -lp %d", msg, port)),
 		container.WithExposedPorts(fmt.Sprintf("%d/tcp", port)),
 		func(c *container.TestContainerConfig) {
-			c.HostConfig.PortBindings = containertypes.PortMap{
-				containertypes.PortRangeProto(fmt.Sprintf("%d/tcp", port)): []containertypes.PortBinding{
+			c.HostConfig.PortBindings = network.PortMap{
+				network.MustParsePort(fmt.Sprintf("%d/tcp", port)): []network.PortBinding{
 					{
 						HostPort: fmt.Sprintf("%d", port),
 					},

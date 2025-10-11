@@ -12,13 +12,12 @@ import (
 
 	"github.com/containerd/log"
 	"github.com/containerd/platforms"
-	"github.com/docker/go-connections/nat"
 	"github.com/moby/moby/api/types"
 	"github.com/moby/moby/api/types/container"
-	"github.com/moby/moby/api/types/filters"
 	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/api/types/versions"
+	"github.com/moby/moby/v2/daemon/internal/filters"
 	"github.com/moby/moby/v2/daemon/internal/runconfig"
 	"github.com/moby/moby/v2/daemon/libnetwork/netlabel"
 	networkSettings "github.com/moby/moby/v2/daemon/network"
@@ -524,11 +523,6 @@ func (c *containerRouter) postContainersCreate(ctx context.Context, w http.Respo
 
 	version := httputils.VersionFromContext(ctx)
 
-	// When using API 1.24 and under, the client is responsible for removing the container
-	if versions.LessThan(version, "1.25") {
-		hostConfig.AutoRemove = false
-	}
-
 	if versions.LessThan(version, "1.40") {
 		// Ignore BindOptions.NonRecursive because it was added in API 1.40.
 		for _, m := range hostConfig.Mounts {
@@ -888,7 +882,7 @@ func handleSysctlBC(
 func handlePortBindingsBC(hostConfig *container.HostConfig, version string) string {
 	var emptyPBs []string
 
-	for portProto, bindings := range hostConfig.PortBindings {
+	for port, bindings := range hostConfig.PortBindings {
 		if len(bindings) > 0 {
 			continue
 		}
@@ -899,15 +893,15 @@ func handlePortBindingsBC(hostConfig *container.HostConfig, version string) stri
 			// on-disk state for containers created by older versions of the
 			// Engine. Drop the PortBindings entry to ensure that no backfilling
 			// will happen when restarting the daemon.
-			delete(hostConfig.PortBindings, portProto)
+			delete(hostConfig.PortBindings, port)
 			continue
 		}
 
 		if versions.Equal(version, "1.52") {
-			emptyPBs = append(emptyPBs, string(portProto))
+			emptyPBs = append(emptyPBs, port.String())
 		}
 
-		hostConfig.PortBindings[portProto] = []nat.PortBinding{{}}
+		hostConfig.PortBindings[port] = []network.PortBinding{{}}
 	}
 
 	if len(emptyPBs) > 0 {

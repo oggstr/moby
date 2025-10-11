@@ -34,6 +34,13 @@ keywords: "API, Docker, rcli, REST, documentation"
 * `GET /images/{name}/json` now omits the following `Config` fields when
   not set, to closer align with the implementation of the [OCI Image Specification](https://github.com/opencontainers/image-spec/blob/v1.1.1/specs-go/v1/config.go#L23-L62)
   `Cmd`, `Entrypoint`, `Env`, `Labels`, `OnBuild`, `User`, `Volumes`, and `WorkingDir`.
+* `GET /images/{name}/json` now omits the following fields if their value
+  is empty: `Parent`, `Comment`, `DockerVersion`, `Author`. The `Parent`
+  and `DockerVersion` fields were set by the legacy builder, and are no
+  longer set when using BuildKit. The `Author` field is set through the
+  `MAINTAINER` Dockerfile instruction, which is deprecated, and the `Comment`
+  field is option, and may not be set depending on how the image was created.
+* `GET /container/{id}/json` now omits `Config.OnBuild` if its value is empty.
 * `GET /containers/{id}/json`: the `NetworkSettings` no longer returns the deprecated
   `Bridge`, `HairpinMode`, `LinkLocalIPv6Address`, `LinkLocalIPv6PrefixLen`,
   `SecondaryIPAddresses`, `SecondaryIPv6Addresses`, `EndpointID`, `Gateway`,
@@ -45,6 +52,8 @@ keywords: "API, Docker, rcli, REST, documentation"
   on API version `v1.52` and up. Older API versions still accept this field, but
   may take no effect, depending on the kernel version and OCI runtime in use.
 * Removed the `KernelMemoryTCP` field from the `GET /info` endpoint.
+* `GET /events` supports content-type negotiation and can produce either `application/x-ndjson` 
+  (Newline delimited JSON object stream) or `application/json-seq` (RFC7464).
 
 ## v1.51 API changes
 
@@ -60,6 +69,15 @@ keywords: "API, Docker, rcli, REST, documentation"
   in the next API version.
 * Deprecated: The field `KernelMemoryTCP` as part of `GET /info` is deprecated
   and will be removed in the next API version.
+* Deprecated: the `Parent` and `DockerVersion` fields returned by the
+  `GET /images/{name}/json` endpoint are deprecated. These fields are set by
+  the legacy builder, and are no longer set when using BuildKit. The API
+  continues returning these fields when set for informational purposes, but
+  they should not be depended on as they will be omitted once the legacy builder
+  is removed.
+* Deprecated: the `Config.DockerVersion` field returned by the `GET /plugins`
+  and `GET /images/{name}/json` endpoints is deprecated. The field is no
+  longer set, and is omitted when empty.
 
 ## v1.50 API changes
 

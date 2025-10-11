@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -21,6 +22,7 @@ import (
 	containertypes "github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/events"
 	mounttypes "github.com/moby/moby/api/types/mount"
+	networktypes "github.com/moby/moby/api/types/network"
 	swarmtypes "github.com/moby/moby/api/types/swarm"
 	"github.com/moby/moby/v2/daemon/internal/image"
 	libcontainerdtypes "github.com/moby/moby/v2/daemon/internal/libcontainerd/types"
@@ -618,7 +620,7 @@ func (container *Container) InitDNSHostConfig() {
 	container.Lock()
 	defer container.Unlock()
 	if container.HostConfig.DNS == nil {
-		container.HostConfig.DNS = make([]string, 0)
+		container.HostConfig.DNS = make([]netip.Addr, 0)
 	}
 
 	if container.HostConfig.DNSSearch == nil {
@@ -650,7 +652,7 @@ func (container *Container) BackfillEmptyPBs() {
 		if len(pb) > 0 || pb == nil {
 			continue
 		}
-		container.HostConfig.PortBindings[portProto] = []containertypes.PortBinding{
+		container.HostConfig.PortBindings[portProto] = []networktypes.PortBinding{
 			{}, // Backfill an empty PortBinding
 		}
 	}

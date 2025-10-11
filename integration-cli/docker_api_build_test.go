@@ -313,16 +313,28 @@ func (s *DockerAPISuite) TestBuildOnBuildCache(c *testing.T) {
 	assert.Assert(c, is.Len(imageIDs, 2))
 	parentID, childID := imageIDs[0], imageIDs[1]
 
-	client := testEnv.APIClient()
+	apiClient := testEnv.APIClient()
 	ctx := testutil.GetContext(c)
 
 	// check parentID is correct
 	// Parent is graphdriver-only
 	if !testEnv.UsingSnapshotter() {
-		image, err := client.ImageInspect(ctx, childID)
+		var buf bytes.Buffer
+		_, err := apiClient.ImageInspect(ctx, childID, client.ImageInspectWithRawResponse(&buf))
 		assert.NilError(c, err)
 
-		assert.Check(c, is.Equal(parentID, image.Parent))
+		var image struct {
+			// Parent is the ID of the parent image.
+			//
+			// Depending on how the image was created, this field may be empty and
+			// is only set for images that were built/created locally. This field
+			// is omitted if the image was pulled from an image registry.
+			Parent string `json:",omitempty"`
+		}
+		rawResponse := buf.Bytes()
+		err = json.Unmarshal(rawResponse, &image)
+		assert.NilError(c, err, string(rawResponse))
+		assert.Check(c, is.Equal(parentID, image.Parent), string(rawResponse))
 	}
 }
 

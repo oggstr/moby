@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/go-connections/nat"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	containertypes "github.com/moby/moby/api/types/container"
 	networktypes "github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/api/types/versions"
@@ -72,8 +72,7 @@ func TestCreateWithIPv6DefaultsToULAPrefix(t *testing.T) {
 	assert.NilError(t, err)
 
 	for _, ipam := range nw.IPAM.Config {
-		ipr := netip.MustParsePrefix(ipam.Subnet)
-		if netip.MustParsePrefix("fd00::/8").Overlaps(ipr) {
+		if netip.MustParsePrefix("fd00::/8").Overlaps(ipam.Subnet) {
 			return
 		}
 	}
@@ -99,8 +98,7 @@ func TestCreateWithIPv6WithoutEnableIPv6Flag(t *testing.T) {
 	assert.NilError(t, err)
 
 	for _, ipam := range nw.IPAM.Config {
-		ipr := netip.MustParsePrefix(ipam.Subnet)
-		if netip.MustParsePrefix("fd00::/8").Overlaps(ipr) {
+		if netip.MustParsePrefix("fd00::/8").Overlaps(ipam.Subnet) {
 			return
 		}
 	}
@@ -518,18 +516,19 @@ func TestEndpointWithCustomIfname(t *testing.T) {
 func TestPublishedPortAlreadyInUse(t *testing.T) {
 	ctx := setupTest(t)
 	apiClient := testEnv.APIClient()
+	mappedPort := networktypes.MustParsePort("80/tcp")
 
 	ctr1 := ctr.Run(ctx, t, apiClient,
 		ctr.WithCmd("top"),
 		ctr.WithExposedPorts("80/tcp"),
-		ctr.WithPortMap(containertypes.PortMap{"80/tcp": {{HostPort: "8000"}}}))
+		ctr.WithPortMap(networktypes.PortMap{mappedPort: {{HostPort: "8000"}}}))
 	defer ctr.Remove(ctx, t, apiClient, ctr1, client.ContainerRemoveOptions{Force: true})
 
 	ctr2 := ctr.Create(ctx, t, apiClient,
 		ctr.WithCmd("top"),
 		ctr.WithRestartPolicy(containertypes.RestartPolicyAlways),
 		ctr.WithExposedPorts("80/tcp"),
-		ctr.WithPortMap(containertypes.PortMap{"80/tcp": {{HostPort: "8000"}}}))
+		ctr.WithPortMap(networktypes.PortMap{mappedPort: {{HostPort: "8000"}}}))
 	defer ctr.Remove(ctx, t, apiClient, ctr2, client.ContainerRemoveOptions{Force: true})
 
 	err := apiClient.ContainerStart(ctx, ctr2, client.ContainerStartOptions{})
@@ -564,19 +563,19 @@ func TestAllPortMappingsAreReturned(t *testing.T) {
 
 	ctrID := ctr.Run(ctx, t, apiClient,
 		ctr.WithExposedPorts("80/tcp", "81/tcp"),
-		ctr.WithPortMap(containertypes.PortMap{"80/tcp": {{HostPort: "8000"}}}),
+		ctr.WithPortMap(networktypes.PortMap{networktypes.MustParsePort("80/tcp"): {{HostPort: "8000"}}}),
 		ctr.WithEndpointSettings("testnetv4", &networktypes.EndpointSettings{}),
 		ctr.WithEndpointSettings("testnetv6", &networktypes.EndpointSettings{}))
 	defer ctr.Remove(ctx, t, apiClient, ctrID, client.ContainerRemoveOptions{Force: true})
 
 	inspect := ctr.Inspect(ctx, t, apiClient, ctrID)
-	assert.DeepEqual(t, inspect.NetworkSettings.Ports, containertypes.PortMap{
-		"80/tcp": []containertypes.PortBinding{
-			{HostIP: "0.0.0.0", HostPort: "8000"},
-			{HostIP: "::", HostPort: "8000"},
+	assert.DeepEqual(t, inspect.NetworkSettings.Ports, networktypes.PortMap{
+		networktypes.MustParsePort("80/tcp"): []networktypes.PortBinding{
+			{HostIP: netip.IPv4Unspecified(), HostPort: "8000"},
+			{HostIP: netip.IPv6Unspecified(), HostPort: "8000"},
 		},
-		"81/tcp": nil,
-	})
+		networktypes.MustParsePort("81/tcp"): nil,
+	}, cmpopts.EquateComparable(netip.Addr{}))
 }
 
 // TestFirewalldReloadNoZombies checks that when firewalld is reloaded, rules
@@ -603,7 +602,7 @@ func TestFirewalldReloadNoZombies(t *testing.T) {
 
 	cid := ctr.Run(ctx, t, c,
 		ctr.WithExposedPorts("80/tcp", "81/tcp"),
-		ctr.WithPortMap(containertypes.PortMap{"80/tcp": {{HostPort: "8000"}}}))
+		ctr.WithPortMap(networktypes.PortMap{networktypes.MustParsePort("80/tcp"): {{HostPort: "8000"}}}))
 	defer func() {
 		if !removed {
 			ctr.Remove(ctx, t, c, cid, client.ContainerRemoveOptions{Force: true})
@@ -680,13 +679,13 @@ func TestLegacyLink(t *testing.T) {
 	}{
 		{
 			name:   "no link",
-			host:   svrAddr,
+			host:   svrAddr.String(),
 			expect: "download timed out",
 		},
 		{
 			name:   "access by address",
 			links:  []string{svrName},
-			host:   svrAddr,
+			host:   svrAddr.String(),
 			expect: "404 Not Found", // Got a response, but the server has nothing to serve.
 		},
 		{
@@ -773,7 +772,7 @@ func TestRemoveLegacyLink(t *testing.T) {
 
 	// Check the icc=false rules now block access by address.
 	svrAddr := inspSvr.NetworkSettings.Networks["bridge"].IPAddress
-	res = ctr.ExecT(ctx, t, c, clientId, []string{"wget", "-T3", "http://" + svrAddr})
+	res = ctr.ExecT(ctx, t, c, clientId, []string{"wget", "-T3", "http://" + svrAddr.String()})
 	assert.Check(t, is.Contains(res.Stderr(), "download timed out"))
 }
 
@@ -793,7 +792,7 @@ func TestPortMappingRestore(t *testing.T) {
 	const svrName = "svr"
 	cid := ctr.Run(ctx, t, c,
 		ctr.WithExposedPorts("80/tcp"),
-		ctr.WithPortMap(containertypes.PortMap{"80/tcp": {}}),
+		ctr.WithPortMap(networktypes.PortMap{networktypes.MustParsePort("80/tcp"): {}}),
 		ctr.WithName(svrName),
 		ctr.WithRestartPolicy(containertypes.RestartPolicyUnlessStopped),
 		ctr.WithCmd("httpd", "-f"),
@@ -804,9 +803,9 @@ func TestPortMappingRestore(t *testing.T) {
 		t.Helper()
 		insp := ctr.Inspect(ctx, t, c, cid)
 		assert.Check(t, is.Equal(insp.State.Running, true))
-		if assert.Check(t, is.Contains(insp.NetworkSettings.Ports, containertypes.PortRangeProto("80/tcp"))) &&
-			assert.Check(t, is.Len(insp.NetworkSettings.Ports["80/tcp"], 2)) {
-			hostPort := insp.NetworkSettings.Ports["80/tcp"][0].HostPort
+		if assert.Check(t, is.Contains(insp.NetworkSettings.Ports, networktypes.MustParsePort("80/tcp"))) &&
+			assert.Check(t, is.Len(insp.NetworkSettings.Ports[networktypes.MustParsePort("80/tcp")], 2)) {
+			hostPort := insp.NetworkSettings.Ports[networktypes.MustParsePort("80/tcp")][0].HostPort
 			res := ctr.RunAttach(ctx, t, c,
 				ctr.WithExtraHost("thehost:host-gateway"),
 				ctr.WithCmd("wget", "-T3", "http://"+net.JoinHostPort("thehost", hostPort)),
@@ -951,7 +950,7 @@ func TestEmptyPortBindingsBC(t *testing.T) {
 	d.StartWithBusybox(ctx, t)
 	defer d.Stop(t)
 
-	createInspect := func(t *testing.T, version string, pbs []nat.PortBinding) (containertypes.PortMap, []string) {
+	createInspect := func(t *testing.T, version string, pbs []networktypes.PortBinding) (networktypes.PortMap, []string) {
 		apiClient := d.NewClientT(t, client.WithVersion(version))
 		defer apiClient.Close()
 
@@ -966,7 +965,7 @@ func TestEmptyPortBindingsBC(t *testing.T) {
 		// Create a container with an empty list of port bindings for container port 80/tcp.
 		config := ctr.NewTestConfig(ctr.WithCmd("top"),
 			ctr.WithExposedPorts("80/tcp"),
-			ctr.WithPortMap(containertypes.PortMap{"80/tcp": pbs}))
+			ctr.WithPortMap(networktypes.PortMap{networktypes.MustParsePort("80/tcp"): pbs}))
 		c, err := apiClient.ContainerCreate(ctx, config.Config, config.HostConfig, config.NetworkingConfig, config.Platform, config.Name)
 		assert.NilError(t, err)
 		defer apiClient.ContainerRemove(ctx, c.ID, client.ContainerRemoveOptions{Force: true})
@@ -979,48 +978,48 @@ func TestEmptyPortBindingsBC(t *testing.T) {
 	}
 
 	t.Run("backfilling on old client version", func(t *testing.T) {
-		expMappings := containertypes.PortMap{"80/tcp": {
+		expMappings := networktypes.PortMap{networktypes.MustParsePort("80/tcp"): {
 			{}, // An empty PortBinding is backfilled
 		}}
 		expWarnings := make([]string, 0)
 
-		mappings, warnings := createInspect(t, "1.51", []nat.PortBinding{})
-		assert.DeepEqual(t, expMappings, mappings)
-		assert.DeepEqual(t, expWarnings, warnings)
+		mappings, warnings := createInspect(t, "1.51", []networktypes.PortBinding{})
+		assert.DeepEqual(t, expMappings, mappings, cmpopts.EquateComparable(netip.Addr{}))
+		assert.DeepEqual(t, expWarnings, warnings, cmpopts.EquateComparable(netip.Addr{}))
 	})
 
 	t.Run("backfilling on API 1.52, with a warning", func(t *testing.T) {
-		expMappings := containertypes.PortMap{"80/tcp": {
+		expMappings := networktypes.PortMap{networktypes.MustParsePort("80/tcp"): {
 			{}, // An empty PortBinding is backfilled
 		}}
 		expWarnings := []string{
 			"Following container port(s) have an empty list of port-bindings: 80/tcp. Starting with API 1.53, such bindings will be discarded.",
 		}
 
-		mappings, warnings := createInspect(t, "1.52", []nat.PortBinding{})
-		assert.DeepEqual(t, expMappings, mappings)
-		assert.DeepEqual(t, expWarnings, warnings)
+		mappings, warnings := createInspect(t, "1.52", []networktypes.PortBinding{})
+		assert.DeepEqual(t, expMappings, mappings, cmpopts.EquateComparable(netip.Addr{}))
+		assert.DeepEqual(t, expWarnings, warnings, cmpopts.EquateComparable(netip.Addr{}))
 	})
 
 	t.Run("no backfilling on API 1.53", func(t *testing.T) {
-		expMappings := containertypes.PortMap{}
+		expMappings := networktypes.PortMap{}
 		expWarnings := make([]string, 0)
 
-		mappings, warnings := createInspect(t, "1.53", []nat.PortBinding{})
-		assert.DeepEqual(t, expMappings, mappings)
-		assert.DeepEqual(t, expWarnings, warnings)
+		mappings, warnings := createInspect(t, "1.53", []networktypes.PortBinding{})
+		assert.DeepEqual(t, expMappings, mappings, cmpopts.EquateComparable(netip.Addr{}))
+		assert.DeepEqual(t, expWarnings, warnings, cmpopts.EquateComparable(netip.Addr{}))
 	})
 
 	for _, apiVersion := range []string{"1.51", "1.52", "1.53"} {
 		t.Run("no backfilling on API "+apiVersion+" with non-empty bindings", func(t *testing.T) {
-			expMappings := containertypes.PortMap{"80/tcp": {
+			expMappings := networktypes.PortMap{networktypes.MustParsePort("80/tcp"): {
 				{HostPort: "8080"},
 			}}
 			expWarnings := make([]string, 0)
 
-			mappings, warnings := createInspect(t, apiVersion, []nat.PortBinding{{HostPort: "8080"}})
-			assert.DeepEqual(t, expMappings, mappings)
-			assert.DeepEqual(t, expWarnings, warnings)
+			mappings, warnings := createInspect(t, apiVersion, []networktypes.PortBinding{{HostPort: "8080"}})
+			assert.DeepEqual(t, expMappings, mappings, cmpopts.EquateComparable(netip.Addr{}))
+			assert.DeepEqual(t, expWarnings, warnings, cmpopts.EquateComparable(netip.Addr{}))
 		})
 	}
 }
@@ -1043,7 +1042,7 @@ func TestPortBindingBackfillingForOlderContainers(t *testing.T) {
 
 	cid := ctr.Create(ctx, t, c,
 		ctr.WithExposedPorts("80/tcp"),
-		ctr.WithPortMap(containertypes.PortMap{"80/tcp": {}}))
+		ctr.WithPortMap(networktypes.PortMap{networktypes.MustParsePort("80/tcp"): {}}))
 	defer c.ContainerRemove(ctx, cid, client.ContainerRemoveOptions{Force: true})
 
 	// Stop the daemon to safely tamper with the on-disk state.
@@ -1052,7 +1051,7 @@ func TestPortBindingBackfillingForOlderContainers(t *testing.T) {
 	d.TamperWithContainerConfig(t, cid, func(container *container.Container) {
 		// Simulate a container created with an older version of the Engine
 		// by setting an empty list of port bindings.
-		container.HostConfig.PortBindings = containertypes.PortMap{"80/tcp": {}}
+		container.HostConfig.PortBindings = networktypes.PortMap{networktypes.MustParsePort("80/tcp"): {}}
 	})
 
 	// Restart the daemon — it should backfill the empty port binding slice.
@@ -1060,10 +1059,10 @@ func TestPortBindingBackfillingForOlderContainers(t *testing.T) {
 
 	inspect := ctr.Inspect(ctx, t, c, cid)
 
-	expMappings := containertypes.PortMap{"80/tcp": {
+	expMappings := networktypes.PortMap{networktypes.MustParsePort("80/tcp"): {
 		{}, // An empty PortBinding is backfilled
 	}}
-	assert.DeepEqual(t, expMappings, inspect.HostConfig.PortBindings)
+	assert.DeepEqual(t, expMappings, inspect.HostConfig.PortBindings, cmpopts.EquateComparable(netip.Addr{}))
 }
 
 func TestBridgeIPAMStatus(t *testing.T) {
@@ -1109,22 +1108,22 @@ func TestBridgeIPAMStatus(t *testing.T) {
 		network.CreateNoError(ctx, t, c, netName,
 			network.WithIPv4(true),
 			network.WithIPAMConfig(networktypes.IPAMConfig{
-				Subnet:  cidrv4.String(),
-				IPRange: ipv4Range,
-				Gateway: ipv4gw,
-				AuxAddress: map[string]string{
-					"reserved":   auxIPv4FromRange,
-					"reserved_1": auxIPv4OutOfRange,
+				Subnet:  cidrv4,
+				IPRange: netip.MustParsePrefix(ipv4Range),
+				Gateway: netip.MustParseAddr(ipv4gw),
+				AuxAddress: map[string]netip.Addr{
+					"reserved":   netip.MustParseAddr(auxIPv4FromRange),
+					"reserved_1": netip.MustParseAddr(auxIPv4OutOfRange),
 				},
 			}),
 			network.WithIPv6(),
 			network.WithIPAMConfig(networktypes.IPAMConfig{
-				Subnet:  cidrv6.String(),
-				IPRange: ipv6Range,
-				Gateway: ipv6gw,
-				AuxAddress: map[string]string{
-					"reserved1": auxIPv6FromRange,
-					"reserved2": auxIPv6OutOfRange,
+				Subnet:  cidrv6,
+				IPRange: netip.MustParsePrefix(ipv6Range),
+				Gateway: netip.MustParseAddr(ipv6gw),
+				AuxAddress: map[string]netip.Addr{
+					"reserved1": netip.MustParseAddr(auxIPv6FromRange),
+					"reserved2": netip.MustParseAddr(auxIPv6OutOfRange),
 				},
 			}),
 		)
@@ -1205,7 +1204,7 @@ func TestBridgeIPAMStatus(t *testing.T) {
 			network.WithIPv4(false),
 			network.WithIPv6(),
 			network.WithIPAMConfig(networktypes.IPAMConfig{
-				Subnet: cidr.String(),
+				Subnet: cidr,
 			}),
 		)
 		defer c.NetworkRemove(ctx, netName)

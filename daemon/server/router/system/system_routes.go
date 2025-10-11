@@ -8,15 +8,17 @@ import (
 	"time"
 
 	"github.com/containerd/log"
+	"github.com/golang/gddo/httputil"
 	"github.com/moby/moby/api/pkg/authconfig"
+	"github.com/moby/moby/api/types"
 	buildtypes "github.com/moby/moby/api/types/build"
 	"github.com/moby/moby/api/types/events"
-	"github.com/moby/moby/api/types/filters"
 	"github.com/moby/moby/api/types/registry"
 	"github.com/moby/moby/api/types/swarm"
 	"github.com/moby/moby/api/types/system"
 	"github.com/moby/moby/api/types/versions"
 	"github.com/moby/moby/v2/daemon/internal/compat"
+	"github.com/moby/moby/v2/daemon/internal/filters"
 	"github.com/moby/moby/v2/daemon/internal/timestamp"
 	"github.com/moby/moby/v2/daemon/server/backend"
 	"github.com/moby/moby/v2/daemon/server/httputils"
@@ -62,7 +64,7 @@ func (s *systemRouter) swarmStatus() string {
 
 func (s *systemRouter) getInfo(ctx context.Context, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	version := httputils.VersionFromContext(ctx)
-	info, _, _ := s.collectSystemInfo.Do(ctx, version, func(ctx context.Context) (*infoResponse, error) {
+	info, _, _ := s.collectSystemInfo.Do(ctx, version, func(ctx context.Context) (*compat.Wrapper, error) {
 		info, err := s.backend.SystemInfo(ctx)
 		if err != nil {
 			return nil, err
@@ -73,6 +75,7 @@ func (s *systemRouter) getInfo(ctx context.Context, w http.ResponseWriter, r *ht
 			info.Warnings = append(info.Warnings, info.Swarm.Warnings...)
 		}
 
+		var legacyOptions []compat.Option
 		if versions.LessThan(version, "1.44") {
 			for k, rt := range info.Runtimes {
 				// Status field introduced in API v1.44.
@@ -86,35 +89,36 @@ func (s *systemRouter) getInfo(ctx context.Context, w http.ResponseWriter, r *ht
 		if versions.LessThan(version, "1.47") {
 			// Field is omitted in API 1.48 and up, but should still be included
 			// in older versions, even if no values are set.
-			info.RegistryConfig.ExtraFields = map[string]any{
-				"AllowNondistributableArtifactsCIDRs":     json.RawMessage(nil),
-				"AllowNondistributableArtifactsHostnames": json.RawMessage(nil),
-			}
+			legacyOptions = append(legacyOptions, compat.WithExtraFields(map[string]any{
+				"RegistryConfig": map[string]any{
+					"AllowNondistributableArtifactsCIDRs":     json.RawMessage(nil),
+					"AllowNondistributableArtifactsHostnames": json.RawMessage(nil),
+				},
+			}))
 		}
 		if versions.LessThan(version, "1.49") {
 			// FirewallBackend field introduced in API v1.49.
 			info.FirewallBackend = nil
-		}
 
-		extraFields := map[string]any{}
-		if versions.LessThan(version, "1.49") {
 			// Expected commits are omitted in API 1.49, but should still be
 			// included in older versions.
-			info.ContainerdCommit.Expected = info.ContainerdCommit.ID //nolint:staticcheck // ignore SA1019: field is deprecated, but still used on API < v1.49.
-			info.RuncCommit.Expected = info.RuncCommit.ID             //nolint:staticcheck // ignore SA1019: field is deprecated, but still used on API < v1.49.
-			info.InitCommit.Expected = info.InitCommit.ID             //nolint:staticcheck // ignore SA1019: field is deprecated, but still used on API < v1.49.
+			legacyOptions = append(legacyOptions, compat.WithExtraFields(map[string]any{
+				"ContainerdCommit": map[string]any{"Expected": info.ContainerdCommit.ID},
+				"RuncCommit":       map[string]any{"Expected": info.RuncCommit.ID},
+				"InitCommit":       map[string]any{"Expected": info.InitCommit.ID},
+			}))
 		}
 		if versions.LessThan(version, "1.50") {
 			info.DiscoveredDevices = nil
 
 			// These fields are omitted in > API 1.49, and always false
 			// older API versions.
-			extraFields = map[string]any{
+			legacyOptions = append(legacyOptions, compat.WithExtraFields(map[string]any{
 				"BridgeNfIptables":  json.RawMessage("false"),
 				"BridgeNfIp6tables": json.RawMessage("false"),
-			}
+			}))
 		}
-		return &infoResponse{Info: info, extraFields: extraFields}, nil
+		return compat.Wrap(info, legacyOptions...), nil
 	})
 
 	return httputils.WriteJSON(w, http.StatusOK, info)
@@ -296,13 +300,17 @@ func (s *systemRouter) getEvents(ctx context.Context, w http.ResponseWriter, r *
 		return err
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	contentType := httputil.NegotiateContentType(r, []string{
+		types.MediaTypeNDJSON,
+		types.MediaTypeJSONSequence,
+	}, types.MediaTypeJSON) // output isn't actually JSON but API used to  this content-type
+	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(http.StatusOK)
 	output := ioutils.NewWriteFlusher(w)
 	defer output.Close()
 	output.Flush()
 
-	enc := json.NewEncoder(output)
+	encode := httputils.NewJSONStreamEncoder(output, contentType)
 
 	buffered, l := s.backend.SubscribeToEvents(since, until, ef)
 	defer s.backend.UnsubscribeFromEvents(l)
@@ -325,12 +333,12 @@ func (s *systemRouter) getEvents(ctx context.Context, w http.ResponseWriter, r *
 			continue
 		}
 		if includeLegacyFields {
-			if err := enc.Encode(backFillLegacy(&ev)); err != nil {
+			if err := encode(backFillLegacy(&ev)); err != nil {
 				return err
 			}
 			continue
 		}
-		if err := enc.Encode(ev); err != nil {
+		if err := encode(ev); err != nil {
 			return err
 		}
 	}
@@ -351,12 +359,12 @@ func (s *systemRouter) getEvents(ctx context.Context, w http.ResponseWriter, r *
 				continue
 			}
 			if includeLegacyFields {
-				if err := enc.Encode(backFillLegacy(&jev)); err != nil {
+				if err := encode(backFillLegacy(&jev)); err != nil {
 					return err
 				}
 				continue
 			}
-			if err := enc.Encode(jev); err != nil {
+			if err := encode(jev); err != nil {
 				return err
 			}
 		case <-timeout:

@@ -8,7 +8,6 @@ import (
 	"github.com/docker/distribution"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/events"
-	"github.com/moby/moby/api/types/filters"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/api/types/registry"
 	"github.com/moby/moby/api/types/swarm"
@@ -16,6 +15,7 @@ import (
 	"github.com/moby/moby/api/types/volume"
 	clustertypes "github.com/moby/moby/v2/daemon/cluster/provider"
 	containerpkg "github.com/moby/moby/v2/daemon/container"
+	"github.com/moby/moby/v2/daemon/internal/filters"
 	"github.com/moby/moby/v2/daemon/internal/image"
 	"github.com/moby/moby/v2/daemon/libnetwork"
 	"github.com/moby/moby/v2/daemon/libnetwork/cluster"
@@ -75,5 +75,5 @@ type VolumeBackend interface {
 type ImageBackend interface {
 	PullImage(ctx context.Context, ref reference.Named, options imagebackend.PullOptions) error
 	GetRepositories(context.Context, reference.Named, *registry.AuthConfig) ([]distribution.Repository, error)
-	GetImage(ctx context.Context, refOrID string, options backend.GetImageOpts) (*image.Image, error)
+	GetImage(ctx context.Context, refOrID string, options imagebackend.GetImageOpts) (*image.Image, error)
 }

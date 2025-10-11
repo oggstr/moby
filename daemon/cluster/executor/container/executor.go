@@ -8,13 +8,13 @@ import (
 	"sync"
 
 	"github.com/containerd/log"
-	"github.com/moby/moby/api/types/filters"
 	"github.com/moby/moby/api/types/network"
 	swarmtypes "github.com/moby/moby/api/types/swarm"
 	"github.com/moby/moby/v2/daemon/cluster/controllers/plugin"
 	"github.com/moby/moby/v2/daemon/cluster/convert"
 	executorpkg "github.com/moby/moby/v2/daemon/cluster/executor"
 	clustertypes "github.com/moby/moby/v2/daemon/cluster/provider"
+	"github.com/moby/moby/v2/daemon/internal/filters"
 	"github.com/moby/moby/v2/daemon/libnetwork"
 	networktypes "github.com/moby/moby/v2/daemon/libnetwork/types"
 	"github.com/moby/swarmkit/v2/agent"
@@ -225,10 +225,9 @@ func (e *executor) Configure(ctx context.Context, node *api.Node) error {
 		}
 
 		for _, ic := range ingressNA.Network.IPAM.Configs {
-			c := network.IPAMConfig{
-				Subnet:  ic.Subnet,
-				IPRange: ic.Range,
-				Gateway: ic.Gateway,
+			c, err := ipamConfig(ic)
+			if err != nil {
+				swarmlog.G(ctx).WithError(err).Warn("invalid IPAM config for Swarm ingress network")
 			}
 			networkCreateRequest.IPAM.Config = append(networkCreateRequest.IPAM.Config, c)
 		}

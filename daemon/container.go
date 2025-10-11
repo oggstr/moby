@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/containerd/log"
-	"github.com/docker/go-connections/nat"
 	containertypes "github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
 	networktypes "github.com/moby/moby/api/types/network"
@@ -373,15 +372,19 @@ func validateHealthCheck(healthConfig *containertypes.HealthConfig) error {
 	return nil
 }
 
-func validatePortBindings(ports containertypes.PortMap) error {
+func validatePortBindings(ports networktypes.PortMap) error {
 	for port := range ports {
-		_, portStr := nat.SplitProtoPort(string(port))
-		if _, err := nat.ParsePort(portStr); err != nil {
-			return errors.Errorf("invalid port specification: %q", portStr)
+		if !port.IsValid() {
+			return errors.Errorf("invalid port specification: %q", port.String())
 		}
+
 		for _, pb := range ports[port] {
-			_, err := nat.NewPort(nat.SplitProtoPort(pb.HostPort))
-			if err != nil {
+			if pb.HostPort == "" {
+				// Empty HostPort means to map to an ephemeral port.
+				continue
+			}
+
+			if _, err := networktypes.ParsePortRange(pb.HostPort); err != nil {
 				return errors.Errorf("invalid port specification: %q", pb.HostPort)
 			}
 		}

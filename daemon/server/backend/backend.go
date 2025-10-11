@@ -7,8 +7,8 @@ import (
 
 	"github.com/distribution/reference"
 	"github.com/moby/moby/api/types/container"
-	"github.com/moby/moby/api/types/filters"
 	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/v2/daemon/internal/filters"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
@@ -158,18 +158,6 @@ type CreateImageConfig struct {
 	Comment string
 	Config  *container.Config
 	Changes []string
-}
-
-// GetImageOpts holds parameters to retrieve image information
-// from the backend.
-type GetImageOpts struct {
-	Platform *ocispec.Platform
-}
-
-// ImageInspectOpts holds parameters to inspect an image.
-type ImageInspectOpts struct {
-	Manifests bool
-	Platform  *ocispec.Platform
 }
 
 // CommitConfig is the configuration for creating an image as part of a build.

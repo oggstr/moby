@@ -25,14 +25,13 @@ import (
 	"github.com/moby/moby/api/pkg/progress"
 	"github.com/moby/moby/api/types"
 	"github.com/moby/moby/api/types/events"
-	"github.com/moby/moby/api/types/filters"
 	"github.com/moby/moby/api/types/plugin"
 	"github.com/moby/moby/api/types/registry"
 	"github.com/moby/moby/v2/daemon/internal/containerfs"
+	"github.com/moby/moby/v2/daemon/internal/filters"
 	"github.com/moby/moby/v2/daemon/internal/stringid"
 	v2 "github.com/moby/moby/v2/daemon/pkg/plugin/v2"
 	"github.com/moby/moby/v2/daemon/server/backend"
-	"github.com/moby/moby/v2/dockerversion"
 	"github.com/moby/moby/v2/errdefs"
 	"github.com/moby/moby/v2/pkg/authorization"
 	"github.com/moby/moby/v2/pkg/pools"
@@ -706,8 +705,6 @@ func (pm *Manager) CreateFromContext(ctx context.Context, tarCtx io.ReadCloser, 
 		Type:    "layers",
 		DiffIds: []string{rootFSBlob.Digest().String()},
 	}
-
-	config.DockerVersion = dockerversion.Version
 
 	configBlob, err := pm.blobStore.Writer(ctx, content.WithRef(name+"-config.json"))
 	if err != nil {
